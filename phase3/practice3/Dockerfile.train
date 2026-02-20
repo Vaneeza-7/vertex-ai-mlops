@@ -2,7 +2,7 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir numpy\<2 pandas scikit-learn joblib google-cloud-storage
+RUN pip install --no-cache-dir numpy\<2 pandas scikit-learn joblib
 
 COPY trainer/train.py /app/train.py
 
