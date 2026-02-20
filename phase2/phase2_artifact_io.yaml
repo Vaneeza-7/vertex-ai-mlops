@@ -1,0 +1,220 @@
+# PIPELINE DEFINITION
+# Name: phase2-artifact-io
+# Description: Phase 2: lightweight components + Dataset/Model/Metrics artifacts
+# Inputs:
+#    n_rows: int [Default: 200.0]
+components:
+  comp-evaluate:
+    executorLabel: exec-evaluate
+    inputDefinitions:
+      artifacts:
+        input_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        input_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+  comp-preprocess:
+    executorLabel: exec-preprocess
+    inputDefinitions:
+      parameters:
+        n_rows:
+          defaultValue: 200.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      artifacts:
+        output_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-train:
+    executorLabel: exec-train
+    inputDefinitions:
+      artifacts:
+        input_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        output_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-evaluate:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas' 'scikit-learn'\
+          \ 'joblib' 'numpy<2'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.15.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate(input_data: Input[Dataset], input_model: Input[Model],\
+          \ metrics: Output[Metrics]):\n    import pandas as pd\n    import joblib\n\
+          \    from sklearn.metrics import accuracy_score\n\n    df = pd.read_csv(input_data.path)\n\
+          \    X = df[[\"x1\", \"x2\"]]\n    y = df[\"y\"]\n\n    clf = joblib.load(input_model.path)\n\
+          \    preds = clf.predict(X)\n\n    acc = float(accuracy_score(y, preds))\n\
+          \    metrics.log_metric(\"accuracy\", acc)\n\n    print(f\"Loaded model\
+          \ from: {input_model.path}\")\n    print(f\"Accuracy: {acc}\")\n\n"
+        image: python:3.10-slim
+    exec-preprocess:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - preprocess
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas' 'scikit-learn'\
+          \ 'numpy<2'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.15.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef preprocess(output_data: Output[Dataset], n_rows: int = 200):\n\
+          \    import pandas as pd\n    import numpy as np\n\n    rng = np.random.default_rng(42)\n\
+          \    x1 = rng.normal(size=n_rows)\n    x2 = rng.normal(size=n_rows)\n  \
+          \  y = (x1 + 0.5 * x2 + rng.normal(scale=0.3, size=n_rows) > 0).astype(int)\n\
+          \n    df = pd.DataFrame({\"x1\": x1, \"x2\": x2, \"y\": y})\n    df.to_csv(output_data.path,\
+          \ index=False)\n\n    print(f\"Wrote dataset to: {output_data.path}\")\n\
+          \    print(df.head())\n\n"
+        image: python:3.10-slim
+    exec-train:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas' 'scikit-learn'\
+          \ 'joblib' 'numpy<2'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.15.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train(input_data: Input[Dataset], output_model: Output[Model]):\n\
+          \    import pandas as pd\n    from sklearn.linear_model import LogisticRegression\n\
+          \    import joblib\n\n    df = pd.read_csv(input_data.path)\n    X = df[[\"\
+          x1\", \"x2\"]]\n    y = df[\"y\"]\n\n    clf = LogisticRegression()\n  \
+          \  clf.fit(X, y)\n\n    # Save model to the provided artifact path\n   \
+          \ joblib.dump(clf, output_model.path)\n\n    print(f\"Read dataset from:\
+          \ {input_data.path}\")\n    print(f\"Saved model to: {output_model.path}\"\
+          )\n\n"
+        image: python:3.10-slim
+pipelineInfo:
+  description: 'Phase 2: lightweight components + Dataset/Model/Metrics artifacts'
+  name: phase2-artifact-io
+root:
+  dag:
+    tasks:
+      evaluate:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate
+        dependentTasks:
+        - preprocess
+        - train
+        inputs:
+          artifacts:
+            input_data:
+              taskOutputArtifact:
+                outputArtifactKey: output_data
+                producerTask: preprocess
+            input_model:
+              taskOutputArtifact:
+                outputArtifactKey: output_model
+                producerTask: train
+        taskInfo:
+          name: evaluate
+      preprocess:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-preprocess
+        inputs:
+          parameters:
+            n_rows:
+              componentInputParameter: n_rows
+        taskInfo:
+          name: preprocess
+      train:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train
+        dependentTasks:
+        - preprocess
+        inputs:
+          artifacts:
+            input_data:
+              taskOutputArtifact:
+                outputArtifactKey: output_data
+                producerTask: preprocess
+        taskInfo:
+          name: train
+  inputDefinitions:
+    parameters:
+      n_rows:
+        defaultValue: 200.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.15.2
