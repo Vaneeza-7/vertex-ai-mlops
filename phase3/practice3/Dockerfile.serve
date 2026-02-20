@@ -1,0 +1,12 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir numpy\<2 joblib fastapi uvicorn
+
+COPY serving/app.py /app/app.py
+
+# Vertex mounts model artifacts to /model in many setups; we rely on that path
+EXPOSE 8080
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
