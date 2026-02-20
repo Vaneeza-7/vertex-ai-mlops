@@ -1,0 +1,191 @@
+# PIPELINE DEFINITION
+# Name: phase1-simple-3step
+# Description: Phase 1: minimal 3-step pipeline to learn define/compile/run
+# Inputs:
+#    factor: int [Default: 3.0]
+#    start: int [Default: 5.0]
+components:
+  comp-generate-number:
+    executorLabel: exec-generate-number
+    inputDefinitions:
+      parameters:
+        start:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: NUMBER_INTEGER
+  comp-multiply-number:
+    executorLabel: exec-multiply-number
+    inputDefinitions:
+      parameters:
+        factor:
+          parameterType: NUMBER_INTEGER
+        x:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: NUMBER_INTEGER
+  comp-print-result:
+    executorLabel: exec-print-result
+    inputDefinitions:
+      parameters:
+        value:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-generate-number:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - generate_number
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef generate_number(start: int) -> int:\n    # simple deterministic\
+          \ \"generation\"\n    n = start + 7\n    print(f\"[generate_number] start={start}\
+          \ -> n={n}\")\n    return n\n\n"
+        image: python:3.10-slim
+    exec-multiply-number:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - multiply_number
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef multiply_number(x: int, factor: int) -> int:\n    y = x * factor\n\
+          \    print(f\"[multiply_number] x={x}, factor={factor} -> y={y}\")\n   \
+          \ return y\n\n"
+        image: python:3.10-slim
+    exec-print-result:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - print_result
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef print_result(value: int) -> str:\n    msg = f\"Final result is\
+          \ {value}\"\n    print(f\"[print_result] {msg}\")\n    return msg\n\n"
+        image: python:3.10-slim
+pipelineInfo:
+  description: 'Phase 1: minimal 3-step pipeline to learn define/compile/run'
+  name: phase1-simple-3step
+root:
+  dag:
+    tasks:
+      generate-number:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-generate-number
+        inputs:
+          parameters:
+            start:
+              componentInputParameter: start
+        taskInfo:
+          name: generate-number
+      multiply-number:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-multiply-number
+        dependentTasks:
+        - generate-number
+        inputs:
+          parameters:
+            factor:
+              componentInputParameter: factor
+            x:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: generate-number
+        taskInfo:
+          name: multiply-number
+      print-result:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-print-result
+        dependentTasks:
+        - multiply-number
+        inputs:
+          parameters:
+            value:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: multiply-number
+        taskInfo:
+          name: print-result
+  inputDefinitions:
+    parameters:
+      factor:
+        defaultValue: 3.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      start:
+        defaultValue: 5.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.15.2
