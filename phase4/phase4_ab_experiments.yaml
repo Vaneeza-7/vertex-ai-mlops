@@ -1,0 +1,768 @@
+# PIPELINE DEFINITION
+# Name: phase4-custom-container-ab-experiments
+# Inputs:
+#    candidate_traffic_percent: int [Default: 10.0]
+#    data_source_gcs_prefix: str [Default: 'gs://vertex-mlops-vinzur/datasets/demo']
+#    endpoint_display_name: str [Default: 'phase4-fixed-endpoint']
+#    endpoint_resource_name: str [Default: '']
+#    git_sha: str [Default: 'unknown']
+#    min_accuracy: float [Default: 0.8]
+#    n_rows: int [Default: 500.0]
+components:
+  comp-compute-gcs-prefix-hash:
+    executorLabel: exec-compute-gcs-prefix-hash
+    inputDefinitions:
+      parameters:
+        gcs_prefix:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        data_hash:
+          parameterType: STRING
+  comp-condition-1:
+    dag:
+      tasks:
+        deploy-ab-and-set-traffic:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-deploy-ab-and-set-traffic
+          dependentTasks:
+          - model-upload
+          inputs:
+            artifacts:
+              model:
+                taskOutputArtifact:
+                  outputArtifactKey: model
+                  producerTask: model-upload
+            parameters:
+              candidate_traffic_percent:
+                componentInputParameter: pipelinechannel--candidate_traffic_percent
+              endpoint_display_name:
+                componentInputParameter: pipelinechannel--endpoint_display_name
+              endpoint_resource_name:
+                componentInputParameter: pipelinechannel--endpoint_resource_name
+              location:
+                runtimeValue:
+                  constant: us-central1
+              machine_type:
+                runtimeValue:
+                  constant: n1-standard-2
+              max_replica_count:
+                runtimeValue:
+                  constant: 1.0
+              min_replica_count:
+                runtimeValue:
+                  constant: 1.0
+              project:
+                runtimeValue:
+                  constant: vertex-ai-487907
+          taskInfo:
+            name: deploy-ab-and-set-traffic
+        export-model-to-gcs:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-export-model-to-gcs
+          inputs:
+            artifacts:
+              model:
+                componentInputArtifact: pipelinechannel--train-container-model
+            parameters:
+              export_gcs_dir:
+                runtimeValue:
+                  constant: gs://vertex-mlops-vinzur/phase4-ab/exported-models/{{$.pipeline_job_uuid}}
+          taskInfo:
+            name: export-model-to-gcs
+        importer:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-importer
+          dependentTasks:
+          - export-model-to-gcs
+          inputs:
+            parameters:
+              uri:
+                taskOutputParameter:
+                  outputParameterKey: exported_uri
+                  producerTask: export-model-to-gcs
+          taskInfo:
+            name: importer
+        model-upload:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-model-upload
+          dependentTasks:
+          - importer
+          inputs:
+            artifacts:
+              unmanaged_container_model:
+                taskOutputArtifact:
+                  outputArtifactKey: artifact
+                  producerTask: importer
+            parameters:
+              display_name:
+                runtimeValue:
+                  constant: phase4-sklearn-model
+              location:
+                runtimeValue:
+                  constant: us-central1
+              project:
+                runtimeValue:
+                  constant: vertex-ai-487907
+          taskInfo:
+            name: model-upload
+    inputDefinitions:
+      artifacts:
+        pipelinechannel--train-container-model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        pipelinechannel--candidate_traffic_percent:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--endpoint_display_name:
+          parameterType: STRING
+        pipelinechannel--endpoint_resource_name:
+          parameterType: STRING
+        pipelinechannel--evaluate-accuracy:
+          parameterType: NUMBER_DOUBLE
+        pipelinechannel--min_accuracy:
+          parameterType: NUMBER_DOUBLE
+  comp-deploy-ab-and-set-traffic:
+    executorLabel: exec-deploy-ab-and-set-traffic
+    inputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: google.VertexModel
+            schemaVersion: 0.0.1
+      parameters:
+        candidate_traffic_percent:
+          parameterType: NUMBER_INTEGER
+        endpoint_display_name:
+          parameterType: STRING
+        endpoint_resource_name:
+          parameterType: STRING
+        location:
+          parameterType: STRING
+        machine_type:
+          parameterType: STRING
+        max_replica_count:
+          parameterType: NUMBER_INTEGER
+        min_replica_count:
+          parameterType: NUMBER_INTEGER
+        project:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        final_endpoint_resource_name:
+          parameterType: STRING
+  comp-evaluate:
+    executorLabel: exec-evaluate
+    inputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+      parameters:
+        accuracy:
+          parameterType: NUMBER_DOUBLE
+  comp-export-model-to-gcs:
+    executorLabel: exec-export-model-to-gcs
+    inputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        export_gcs_dir:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        exported_uri:
+          parameterType: STRING
+  comp-importer:
+    executorLabel: exec-importer
+    inputDefinitions:
+      parameters:
+        uri:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        artifact:
+          artifactType:
+            schemaTitle: google.UnmanagedContainerModel
+            schemaVersion: 0.0.1
+  comp-model-upload:
+    executorLabel: exec-model-upload
+    inputDefinitions:
+      artifacts:
+        parent_model:
+          artifactType:
+            schemaTitle: google.VertexModel
+            schemaVersion: 0.0.1
+          description: An artifact of a model which to upload a new version to. Only
+            specify this field when uploading a new version. [More information.](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/projects.locations.models/upload#request-body)
+          isOptional: true
+        unmanaged_container_model:
+          artifactType:
+            schemaTitle: google.UnmanagedContainerModel
+            schemaVersion: 0.0.1
+          description: 'The unmanaged container model to be uploaded.  The Model can
+            be passed from an upstream step or imported via a KFP `dsl.importer`.
+            Example:
+
+            from kfp import dsl
+
+            from google_cloud_pipeline_components.types import artifact_types
+
+
+            importer_spec = dsl.importer( artifact_uri=''gs://managed-pipeline-gcpc-e2e-test/automl-tabular/model'',
+            artifact_class=artifact_types.UnmanagedContainerModel, metadata={ ''containerSpec'':
+            { ''imageUri'': ''us-docker.pkg.dev/vertex-ai/automl-tabular/prediction-server:prod''
+            } })'
+          isOptional: true
+      parameters:
+        description:
+          defaultValue: ''
+          description: The description of the Model. [More information.](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/projects.locations.models#Model)
+          isOptional: true
+          parameterType: STRING
+        display_name:
+          description: The display name of the Model. The name can be up to 128 characters
+            long and can be consist of any UTF-8 characters. [More information.](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/projects.locations.models#Model)
+          parameterType: STRING
+        encryption_spec_key_name:
+          defaultValue: ''
+          description: 'Customer-managed encryption key spec for a Model. If set,
+            this Model and all sub-resources of this Model will be secured by this
+            key.  Has the form: `projects/my-project/locations/my-location/keyRings/my-kr/cryptoKeys/my-key`.
+            The key needs to be in the same region as where the compute resource is
+            created.'
+          isOptional: true
+          parameterType: STRING
+        explanation_metadata:
+          defaultValue: {}
+          description: Metadata describing the Model's input and output for explanation.
+            Both `explanation_metadata` and `explanation_parameters` must be passed
+            together when used. [More information.](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/ExplanationSpec#explanationmetadata)
+          isOptional: true
+          parameterType: STRUCT
+        explanation_parameters:
+          defaultValue: {}
+          description: Parameters to configure explaining for Model's predictions.  [More
+            information.](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/ExplanationSpec#ExplanationParameters)
+          isOptional: true
+          parameterType: STRUCT
+        labels:
+          defaultValue: {}
+          description: The labels with user-defined metadata to organize your model.  Label
+            keys and values can be no longer than 64 characters (Unicode codepoints),
+            can only contain lowercase letters, numeric characters, underscores and
+            dashes. International characters are allowed.  See https://goo.gl/xmQnxf
+            for more information and examples of labels.
+          isOptional: true
+          parameterType: STRUCT
+        location:
+          defaultValue: us-central1
+          description: Optional location to upload this Model to. If not set, defaults
+            to `us-central1`.
+          isOptional: true
+          parameterType: STRING
+        project:
+          defaultValue: '{{$.pipeline_google_cloud_project_id}}'
+          description: Project to upload this Model to. Defaults to the project in
+            which the PipelineJob is run.
+          isOptional: true
+          parameterType: STRING
+        version_aliases:
+          defaultValue: []
+          description: User provided version aliases so that a model version can be
+            referenced via alias (i.e. `projects/{project}/locations/{location}/models/{modelId}@{version_alias}`
+            instead of auto-generated version id (i.e. `projects/{project}/locations/{location}/models/{modelId}@{versionId}`).
+            The format is [a-z][a-zA-Z0-9-]{0,126}[a-z0-9] to distinguish from versionId.
+            A default version alias will be created for the first version of the model,
+            and there must be exactly one default version alias for a model.
+          isOptional: true
+          parameterType: LIST
+    outputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: google.VertexModel
+            schemaVersion: 0.0.1
+          description: Artifact tracking the created Model version.
+      parameters:
+        gcp_resources:
+          description: Serialized JSON of `gcp_resources` [proto](https://github.com/kubeflow/pipelines/tree/master/components/google-cloud/google_cloud_pipeline_components/proto)
+            which tracks the upload Model's long-running operation.
+          parameterType: STRING
+  comp-train-container:
+    executorLabel: exec-train-container
+    inputDefinitions:
+      parameters:
+        base_output_directory:
+          defaultValue: gs://vertex-mlops-vinzur/phase4-ab
+          isOptional: true
+          parameterType: STRING
+        display_name:
+          defaultValue: phase4-train-custom-container
+          isOptional: true
+          parameterType: STRING
+        enable_web_access:
+          defaultValue: false
+          isOptional: true
+          parameterType: BOOLEAN
+        encryption_spec_key_name:
+          defaultValue: ''
+          isOptional: true
+          parameterType: STRING
+        labels:
+          isOptional: true
+          parameterType: STRUCT
+        location:
+          defaultValue: '{{$.pipeline_google_cloud_location}}'
+          isOptional: true
+          parameterType: STRING
+        max_wait_duration:
+          defaultValue: 86400s
+          isOptional: true
+          parameterType: STRING
+        n_rows:
+          parameterType: NUMBER_INTEGER
+        network:
+          defaultValue: ''
+          isOptional: true
+          parameterType: STRING
+        persistent_resource_id:
+          defaultValue: '{{$.pipeline_persistent_resource_id}}'
+          isOptional: true
+          parameterType: STRING
+        project:
+          defaultValue: '{{$.pipeline_google_cloud_project_id}}'
+          isOptional: true
+          parameterType: STRING
+        psc_interface_config:
+          isOptional: true
+          parameterType: STRUCT
+        reserved_ip_ranges:
+          isOptional: true
+          parameterType: LIST
+        restart_job_on_worker_restart:
+          defaultValue: false
+          isOptional: true
+          parameterType: BOOLEAN
+        service_account:
+          defaultValue: vertex-pipeline-sa@vertex-ai-487907.iam.gserviceaccount.com
+          isOptional: true
+          parameterType: STRING
+        strategy:
+          defaultValue: STANDARD
+          isOptional: true
+          parameterType: STRING
+        tensorboard:
+          defaultValue: ''
+          isOptional: true
+          parameterType: STRING
+        timeout:
+          defaultValue: 604800s
+          isOptional: true
+          parameterType: STRING
+        worker_pool_specs:
+          defaultValue:
+          - container_spec:
+              args:
+              - --n_rows
+              - '{{$.inputs.parameters[''n_rows'']}}'
+              - --model_dir
+              - '{{$.outputs.artifacts[''model''].path}}'
+              command: []
+              env: []
+              image_uri: us-central1-docker.pkg.dev/vertex-ai-487907/vertex-mlops/train-sklearn:1
+            disk_spec:
+              boot_disk_size_gb: 100.0
+              boot_disk_type: pd-ssd
+            machine_spec:
+              machine_type: n1-standard-4
+            replica_count: 1.0
+          isOptional: true
+          parameterType: LIST
+    outputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        gcp_resources:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-compute-gcs-prefix-hash:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - compute_gcs_prefix_hash
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-storage'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef compute_gcs_prefix_hash(gcs_prefix: str) -> NamedTuple(\"Outputs\"\
+          , [(\"data_hash\", str)]):\n    \"\"\"\n    Hashes object names + sizes\
+          \ under a gs://bucket/prefix.\n    Use this as \"dataset version\".\n  \
+          \  \"\"\"\n    import hashlib\n    from google.cloud import storage\n\n\
+          \    if not gcs_prefix.startswith(\"gs://\"):\n        raise ValueError(\"\
+          gcs_prefix must start with gs://\")\n\n    path = gcs_prefix[5:]\n    bucket_name,\
+          \ _, prefix = path.partition(\"/\")\n    prefix = prefix.rstrip(\"/\")\n\
+          \n    client = storage.Client()\n    blobs = list(client.list_blobs(bucket_name,\
+          \ prefix=prefix))\n\n    h = hashlib.sha256()\n    for b in sorted(blobs,\
+          \ key=lambda x: x.name):\n        h.update(b.name.encode(\"utf-8\"))\n \
+          \       h.update(str(getattr(b, \"size\", 0)).encode(\"utf-8\"))\n\n   \
+          \ return (h.hexdigest(),)\n\n"
+        image: python:3.10-slim
+    exec-deploy-ab-and-set-traffic:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - deploy_ab_and_set_traffic
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\nfrom google_cloud_pipeline_components.types import artifact_types\n\
+          \ndef deploy_ab_and_set_traffic(\n    model: Input[artifact_types.VertexModel],\n\
+          \    endpoint_resource_name: str,\n    endpoint_display_name: str,\n   \
+          \ candidate_traffic_percent: int,\n    machine_type: str,\n    min_replica_count:\
+          \ int,\n    max_replica_count: int,\n    project: str,\n    location: str,\n\
+          ) -> NamedTuple(\"Outputs\", [(\"final_endpoint_resource_name\", str)]):\n\
+          \    import time\n    from google.cloud import aiplatform\n\n    aiplatform.init(project=project,\
+          \ location=location)\n\n    # Read resource name at runtime\n    model_resource_name\
+          \ = model.metadata[\"resourceName\"]\n\n    if endpoint_resource_name.strip():\n\
+          \        endpoint = aiplatform.Endpoint(endpoint_resource_name)\n    else:\n\
+          \        endpoint = aiplatform.Endpoint.create(display_name=endpoint_display_name)\n\
+          \n    before_ids = [m.id for m in endpoint.list_models()]\n\n    aiplatform.Model(model_resource_name).deploy(\n\
+          \        endpoint=endpoint,\n        deployed_model_display_name=f\"candidate-{int(time.time())}\"\
+          ,\n        machine_type=machine_type,\n        min_replica_count=min_replica_count,\n\
+          \        max_replica_count=max_replica_count,\n        traffic_percentage=0,\n\
+          \        sync=True,\n    )\n\n    after_ids = [m.id for m in endpoint.list_models()]\n\
+          \    new_ids = [x for x in after_ids if x not in before_ids]\n    if not\
+          \ new_ids:\n        raise RuntimeError(\"Could not detect newly deployed\
+          \ model id.\")\n    candidate_id = new_ids[0]\n\n    if not before_ids:\n\
+          \        endpoint.update(traffic_split={candidate_id: 100})\n        return\
+          \ (endpoint.resource_name,)\n\n    baseline_id = before_ids[0]\n    cand\
+          \ = int(candidate_traffic_percent)\n    if cand < 0 or cand > 100:\n   \
+          \     raise ValueError(\"candidate_traffic_percent must be 0..100\")\n\n\
+          \    endpoint.update(traffic_split={baseline_id: 100 - cand, candidate_id:\
+          \ cand})\n    return (endpoint.resource_name,)\n\n"
+        image: python:3.10-slim
+    exec-evaluate:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'numpy<2' 'pandas'\
+          \ 'scikit-learn' 'joblib'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.15.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate(\n    model: Input[Model],\n    metrics: Output[Metrics],\n\
+          ) -> NamedTuple(\"Outputs\", [(\"accuracy\", float)]):\n    import os\n\
+          \    import joblib\n    import numpy as np\n    import pandas as pd\n  \
+          \  from sklearn.metrics import accuracy_score, confusion_matrix\n\n    clf\
+          \ = joblib.load(f\"{model.path}/model.joblib\")\n\n    rng = np.random.default_rng(123)\n\
+          \    n = 300\n    x1 = rng.normal(size=n)\n    x2 = rng.normal(size=n)\n\
+          \    y = (x1 + 0.5 * x2 + rng.normal(scale=0.3, size=n) > 0).astype(int)\n\
+          \n    X = pd.DataFrame({\"x1\": x1, \"x2\": x2})[[\"x1\", \"x2\"]]\n   \
+          \ y_true = y\n\n    preds = clf.predict(X)\n    acc = float(accuracy_score(y_true,\
+          \ preds))\n\n    cm = confusion_matrix(y_true, preds).tolist()\n\n    metrics.log_metric(\"\
+          accuracy\", acc)\n    # Store confusion matrix as structured metadata so\
+          \ Vertex can show it in UI notebooks/visualizations\n    metrics.metadata[\"\
+          confusion_matrix\"] = {\n        \"rows\": cm,\n        \"labels\": [\"\
+          0\", \"1\"],\n    }\n\n    return (acc,)\n\n"
+        image: python:3.10-slim
+    exec-export-model-to-gcs:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - export_model_to_gcs
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-storage'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef export_model_to_gcs(\n    model: Input[Model],\n    export_gcs_dir:\
+          \ str,\n) -> NamedTuple(\"Outputs\", [(\"exported_uri\", str)]):\n    import\
+          \ os\n    from google.cloud import storage\n\n    if not export_gcs_dir.startswith(\"\
+          gs://\"):\n        raise ValueError(f\"export_gcs_dir must be gs://...,\
+          \ got: {export_gcs_dir}\")\n\n    path = export_gcs_dir[5:]\n    bucket_name,\
+          \ _, prefix = path.partition(\"/\")\n    prefix = prefix.rstrip(\"/\")\n\
+          \n    client = storage.Client()\n    bucket = client.bucket(bucket_name)\n\
+          \n    local_dir = model.path\n    files = []\n    for root, _, fs in os.walk(local_dir):\n\
+          \        for f in fs:\n            files.append(os.path.join(root, f))\n\
+          \n    if not files:\n        raise RuntimeError(f\"No files found in model.path:\
+          \ {local_dir}\")\n\n    for local_path in files:\n        rel = os.path.relpath(local_path,\
+          \ local_dir).replace(\"\\\\\", \"/\")\n        blob_path = f\"{prefix}/{rel}\"\
+          \ if prefix else rel\n        bucket.blob(blob_path).upload_from_filename(local_path)\n\
+          \n    # sanity check\n    check_blob = bucket.blob(f\"{prefix}/model.joblib\"\
+          )\n    if not check_blob.exists(client):\n        raise RuntimeError(f\"\
+          Upload done but model.joblib not found at {export_gcs_dir}/model.joblib\"\
+          )\n\n    return (export_gcs_dir,)\n\n"
+        image: python:3.10-slim
+    exec-importer:
+      importer:
+        artifactUri:
+          runtimeParameter: uri
+        metadata:
+          containerSpec:
+            imageUri: us-central1-docker.pkg.dev/vertex-ai-487907/vertex-mlops/serve-sklearn:1
+        typeSchema:
+          schemaTitle: google.UnmanagedContainerModel
+          schemaVersion: 0.0.1
+    exec-model-upload:
+      container:
+        args:
+        - --type
+        - UploadModel
+        - --payload
+        - '{"Concat": ["{", "\"display_name\": \"", "{{$.inputs.parameters[''display_name'']}}",
+          "\"", ", \"description\": \"", "{{$.inputs.parameters[''description'']}}",
+          "\"", ", \"explanation_spec\": {", "\"parameters\": ", "{{$.inputs.parameters[''explanation_parameters'']}}",
+          ", \"metadata\": ", "{{$.inputs.parameters[''explanation_metadata'']}}",
+          "}", ", \"encryption_spec\": {\"kms_key_name\":\"", "{{$.inputs.parameters[''encryption_spec_key_name'']}}",
+          "\"}", ", \"version_aliases\": ", "{{$.inputs.parameters[''version_aliases'']}}",
+          ", \"labels\": ", "{{$.inputs.parameters[''labels'']}}", ", \"pipeline_job\":
+          \"", "projects/{{$.inputs.parameters[''project'']}}/locations/{{$.inputs.parameters[''location'']}}/pipelineJobs/{{$.pipeline_job_uuid}}",
+          "\"", "}"]}'
+        - --project
+        - '{{$.inputs.parameters[''project'']}}'
+        - --location
+        - '{{$.inputs.parameters[''location'']}}'
+        - --gcp_resources
+        - '{{$.outputs.parameters[''gcp_resources''].output_file}}'
+        - --executor_input
+        - '{{$}}'
+        - '{"IfPresent": {"InputName": "parent_model", "Then": ["--parent_model_name",
+          "{{$.inputs.artifacts[''parent_model''].metadata[''resourceName'']}}"]}}'
+        command:
+        - python3
+        - -u
+        - -m
+        - google_cloud_pipeline_components.container.v1.model.upload_model.launcher
+        image: gcr.io/ml-pipeline/google-cloud-pipeline-components:2.22.0
+    exec-train-container:
+      container:
+        args:
+        - --type
+        - CustomJob
+        - --payload
+        - '{"display_name": "{{$.inputs.parameters[''display_name'']}}", "job_spec":
+          {"worker_pool_specs": {{$.inputs.parameters[''worker_pool_specs'']}}, "scheduling":
+          {"timeout": "{{$.inputs.parameters[''timeout'']}}", "restart_job_on_worker_restart":
+          {{$.inputs.parameters[''restart_job_on_worker_restart'']}}, "strategy":
+          "{{$.inputs.parameters[''strategy'']}}", "max_wait_duration": "{{$.inputs.parameters[''max_wait_duration'']}}"},
+          "service_account": "{{$.inputs.parameters[''service_account'']}}", "tensorboard":
+          "{{$.inputs.parameters[''tensorboard'']}}", "enable_web_access": {{$.inputs.parameters[''enable_web_access'']}},
+          "network": "{{$.inputs.parameters[''network'']}}", "reserved_ip_ranges":
+          {{$.inputs.parameters[''reserved_ip_ranges'']}}, "base_output_directory":
+          {"output_uri_prefix": "{{$.inputs.parameters[''base_output_directory'']}}"},
+          "persistent_resource_id": "{{$.inputs.parameters[''persistent_resource_id'']}}",
+          "psc_interface_config": {{$.inputs.parameters[''psc_interface_config'']}}},
+          "labels": {{$.inputs.parameters[''labels'']}}, "encryption_spec": {"kms_key_name":
+          "{{$.inputs.parameters[''encryption_spec_key_name'']}}"}}'
+        - --project
+        - '{{$.inputs.parameters[''project'']}}'
+        - --location
+        - '{{$.inputs.parameters[''location'']}}'
+        - --gcp_resources
+        - '{{$.outputs.parameters[''gcp_resources''].output_file}}'
+        command:
+        - python3
+        - -u
+        - -m
+        - google_cloud_pipeline_components.container.v1.custom_job.launcher
+        image: gcr.io/ml-pipeline/google-cloud-pipeline-components:2.22.0
+pipelineInfo:
+  name: phase4-custom-container-ab-experiments
+root:
+  dag:
+    tasks:
+      compute-gcs-prefix-hash:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-compute-gcs-prefix-hash
+        inputs:
+          parameters:
+            gcs_prefix:
+              componentInputParameter: data_source_gcs_prefix
+        taskInfo:
+          name: compute-gcs-prefix-hash
+      condition-1:
+        componentRef:
+          name: comp-condition-1
+        dependentTasks:
+        - evaluate
+        - train-container
+        inputs:
+          artifacts:
+            pipelinechannel--train-container-model:
+              taskOutputArtifact:
+                outputArtifactKey: model
+                producerTask: train-container
+          parameters:
+            pipelinechannel--candidate_traffic_percent:
+              componentInputParameter: candidate_traffic_percent
+            pipelinechannel--endpoint_display_name:
+              componentInputParameter: endpoint_display_name
+            pipelinechannel--endpoint_resource_name:
+              componentInputParameter: endpoint_resource_name
+            pipelinechannel--evaluate-accuracy:
+              taskOutputParameter:
+                outputParameterKey: accuracy
+                producerTask: evaluate
+            pipelinechannel--min_accuracy:
+              componentInputParameter: min_accuracy
+        taskInfo:
+          name: deploy_if_good
+        triggerPolicy:
+          condition: inputs.parameter_values['pipelinechannel--evaluate-accuracy']
+            >= inputs.parameter_values['pipelinechannel--min_accuracy']
+      evaluate:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate
+        dependentTasks:
+        - train-container
+        inputs:
+          artifacts:
+            model:
+              taskOutputArtifact:
+                outputArtifactKey: model
+                producerTask: train-container
+        taskInfo:
+          name: evaluate
+      train-container:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-container
+        inputs:
+          parameters:
+            n_rows:
+              componentInputParameter: n_rows
+        taskInfo:
+          name: train-container
+  inputDefinitions:
+    parameters:
+      candidate_traffic_percent:
+        defaultValue: 10.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      data_source_gcs_prefix:
+        defaultValue: gs://vertex-mlops-vinzur/datasets/demo
+        isOptional: true
+        parameterType: STRING
+      endpoint_display_name:
+        defaultValue: phase4-fixed-endpoint
+        isOptional: true
+        parameterType: STRING
+      endpoint_resource_name:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      git_sha:
+        defaultValue: unknown
+        isOptional: true
+        parameterType: STRING
+      min_accuracy:
+        defaultValue: 0.8
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      n_rows:
+        defaultValue: 500.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.15.2
